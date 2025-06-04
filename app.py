@@ -5,28 +5,66 @@ from core.llm_handler import get_simple_issue_suggestion
 from core.kit_generator import generate_basic_kit_content
 import utils.config_loader
 
+
+COMMON_PROGRAMMING_LANGUAGES = {
+    "python", "javascript", "java", "c#", "c++", "c", "go", "rust", "ruby", "php",
+    "swift", "kotlin", "typescript", "html", "css", "sql", "r", "perl", "scala",
+    "haskell", "lua", "dart", "elixir", "clojure", "objective-c"
+
+}
 # Function: find_and_suggest_issues(language_input: str)
 # (Your full function code as we just reviewed - it was correct)
 def find_and_suggest_issues(language_input: str):
     print(f"Gradio app received language: {language_input}")
-    if not language_input:
+    language_input_lower = language_input.strip().lower() # Normalize
+
+    if not language_input_lower:
         return ("Please enter a programming language.", None, None,
                 gr.update(choices=[], value=None, visible=False), gr.update(visible=False),
                 gr.update(visible=False), gr.update(visible=False))
-    fetched_issues_list = fetch_beginner_issues(language_input, per_page=5)
+
+    # Check if the language is common, prepare a potential warning for the LLM/user
+    is_common_language = language_input_lower in COMMON_PROGRAMMING_LANGUAGES
+    language_warning_for_llm = ""
+    if not is_common_language and len(language_input_lower) > 1 : # Avoid warning for single letters like 'c' or 'r' if not in list
+        print(f"Warning: '{language_input}' is not in the common languages list. GitHub API might return broad results.")
+        # This warning could also be displayed in the UI if we add another output component for general status.
+        # For the LLM prompt, we might want to make it aware.
+        language_warning_for_llm = (
+            f"The user searched for the language '{language_input}', which is not in our common list. "
+            "The following issues were found based on labels, but may not strictly be for this language. "
+            "Please base your suggestion on the apparent language of the issues themselves if possible, "
+            "or note if the language seems mismatched."
+        )
+
+    fetched_issues_list = fetch_beginner_issues(language_input_lower, per_page=5) # Use normalized language
+
     if fetched_issues_list is None:
         error_msg = "Error: Could not fetch issues from GitHub. Check server logs."
         return (error_msg, None, None,
                 gr.update(choices=[], value=None, visible=False), gr.update(visible=False),
                 gr.update(visible=False), gr.update(visible=False))
-    if not fetched_issues_list:
+
+    # THIS IS THE KEY CHANGE: If GitHub returns issues for a language we suspect isn't real,
+    # it means it ignored the language filter. We should inform the user.
+    if not fetched_issues_list: # No issues at all
         no_issues_msg = f"No beginner-friendly issues found for '{language_input}' with current labels."
         return (no_issues_msg, None, None,
                 gr.update(choices=[], value=None, visible=False), gr.update(visible=False),
                 gr.update(visible=False), gr.update(visible=False))
+
+    # If issues were found, but the language was not common, prepend a warning to the issue display
+    issues_markdown_prefix = ""
+    if not is_common_language and len(language_input_lower) > 1:
+        issues_markdown_prefix = (
+            f"⚠️ **Note:** '{language_input}' is not a commonly recognized programming language. "
+            f"The issues below were found based on labels like 'good first issue' and may not be specific to '{language_input}'.\n\n---\n"
+        )
+
     issues_display_list = []
     issue_titles_for_dropdown = []
     for i, issue in enumerate(fetched_issues_list[:5]):
+        # ... (formatting issues as before) ...
         title = issue.get('title', 'N/A')
         issues_display_list.append(
             f"{i+1}. **{title}**\n"
@@ -35,17 +73,30 @@ def find_and_suggest_issues(language_input: str):
             f"   - Labels: {', '.join(issue.get('labels', []))}\n"
         )
         issue_titles_for_dropdown.append(f"{i+1}. {title}")
-    issues_markdown = "\n---\n".join(issues_display_list)
+    issues_markdown = issues_markdown_prefix + "\n---\n".join(issues_display_list)
+
+
     issues_for_llm = fetched_issues_list[:3]
     llm_suggestion_text = "Could not get LLM suggestion."
     if issues_for_llm and utils.config_loader.OPENAI_API_KEY:
-        suggestion = get_simple_issue_suggestion(issues_for_llm, language_input, target_count=1)
+        print(f"Sending {len(issues_for_llm)} issues to LLM for suggestion...")
+        # Pass the language warning to the LLM handler, which can then prepend it to the system/user prompt
+        suggestion = get_simple_issue_suggestion(
+            issues_for_llm,
+            language_input, # Original input for context
+            target_count=1,
+            additional_prompt_context=language_warning_for_llm # NEW parameter
+        )
         if suggestion:
             llm_suggestion_text = f"**🤖 AI Navigator's Suggestion:**\n\n{suggestion}"
         else:
             llm_suggestion_text = "LLM gave an empty response or error."
     elif not utils.config_loader.OPENAI_API_KEY:
         llm_suggestion_text = "OpenAI API Key not configured. LLM suggestion skipped."
+    elif not issues_for_llm: # Should be caught by `if not fetched_issues_list` earlier
+         llm_suggestion_text = "No issues were found to provide a suggestion for."
+
+
     kit_dropdown_update = gr.update(choices=issue_titles_for_dropdown, value=issue_titles_for_dropdown[0] if issue_titles_for_dropdown else None)
     kit_button_visibility_update = gr.update(visible=True)
     kit_controls_section_update = gr.update(visible=True)

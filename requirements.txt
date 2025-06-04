@@ -2,4 +2,4 @@ python-dotenv
 requests
 openai
 gradio
-modal-client
+modal
