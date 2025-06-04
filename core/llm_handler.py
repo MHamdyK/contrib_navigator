@@ -107,3 +107,110 @@ def get_simple_issue_suggestion(
         print(f"LLM API call to OpenAI failed with an unexpected error: {e}")
         print(f"Type of error: {type(e)}")
         return f"LLM suggestion failed with an unexpected error: {e}"
+
+# --- NEW FUNCTION 1: Summarize Text Content ---
+def summarize_text_content(
+        text_content: str,
+        purpose: str = "contribution guidelines", # e.g., "issue description", "documentation section"
+        max_summary_tokens: int = 200, # Adjust as needed
+        model_name: str = "gpt-4o-mini" # Or your preferred model
+    ) -> str | None:
+    """
+    Summarizes a given text content using an LLM.
+    """
+    if not client:
+        print("ERROR (llm_handler.summarize_text_content): LLM client not initialized.")
+        return "LLM Client not initialized. Cannot summarize."
+    if not text_content or not text_content.strip():
+        print("Warning (llm_handler.summarize_text_content): No text content provided to summarize.")
+        return "No content provided for summarization."
+
+    # Heuristic: If text is already short, just return it or a small part.
+    # This avoids wasting API calls on tiny texts. (Count words approx)
+    if len(text_content.split()) < 75 : # Arbitrary threshold for "short"
+        print("Info (llm_handler.summarize_text_content): Content too short, returning as is or snippet.")
+        return f"The {purpose} document is brief: \"{text_content[:500]}...\"" if len(text_content) > 500 else text_content
+
+
+    system_prompt = (
+        f"You are an expert summarizer. Your task is to provide a concise summary of the following '{purpose}' document. "
+        "Focus on the most critical information a new contributor would need. "
+        "For contribution guidelines, highlight key setup steps, coding style conventions, testing requirements, and pull request procedures. "
+        "Keep the summary brief and actionable."
+    )
+    user_prompt = (
+        f"Please summarize the key points of the following {purpose} document:\n\n"
+        f"```text\n{text_content[:8000]}\n```" # Limit context sent to LLM
+        # Using 8000 characters as a rough limit to fit within context windows & manage cost.
+        # Adjust this based on typical CONTRIBUTING.md length and model context limits.
+    )
+
+    print(f"LLM Handler: Sending request to summarize {purpose}. Model: {model_name}")
+    try:
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            temperature=0.2, # Lower temperature for factual summarization
+            max_tokens=max_summary_tokens,
+            top_p=1.0
+        )
+        summary_text = completion.choices[0].message.content
+        print(f"LLM Handler: Summary for {purpose} received.")
+        return summary_text.strip()
+    except Exception as e:
+        print(f"ERROR (llm_handler.summarize_text_content): LLM API call failed: {e}")
+        return f"Could not summarize the {purpose}: LLM API error."
+
+# --- NEW FUNCTION 2: Suggest Relevant Code Locations ---
+def suggest_relevant_code_locations(
+        issue_snippet: str,
+        file_list: list[str],
+        language: str, # Language of the project
+        max_suggestion_tokens: int = 200, # Adjust as needed
+        model_name: str = "gpt-4o-mini" # Or your preferred model
+    ) -> str | None:
+    """
+    Suggests relevant files/folders based on an issue snippet and a list of files.
+    """
+    if not client:
+        print("ERROR (llm_handler.suggest_relevant_code_locations): LLM client not initialized.")
+        return "LLM Client not initialized. Cannot suggest locations."
+    if not issue_snippet or not issue_snippet.strip():
+        return "No issue description provided to suggest locations."
+    if not file_list:
+        return "No file list provided to suggest locations from."
+
+    # Format file list for the prompt
+    formatted_file_list = "\n".join([f"- `{f}`" for f in file_list])
+    if not formatted_file_list: # Should not happen if file_list is not empty
+        formatted_file_list = "No files listed."
+
+    system_prompt = (
+        f"You are an AI assistant helping a software developer navigate a new '{language}' codebase. "
+        "Your goal is to identify potentially relevant files or folders for a given issue, based on a provided list of top-level project files/folders."
+    )
+    user_prompt = (
+        f"A developer is starting work on an issue with the following description snippet:\n"
+        f"'''\n{issue_snippet}\n'''\n\n"
+        f"The top-level files and folders available in the repository are:\n"
+        f"{formatted_file_list}\n\n"
+        f"Based *only* on the issue snippet and this file list, please suggest 2-3 files or folders that might be most relevant for investigating this issue. "
+        f"For each suggestion, provide a brief (1-sentence) explanation of why it might be relevant. "
+        f"If no files seem obviously relevant from the top-level list, say so."
+    )
+
+    print(f"LLM Handler: Sending request to suggest relevant code locations. Model: {model_name}")
+    try:
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            temperature=0.5, # Moderate temperature for some reasoning
+            max_tokens=max_suggestion_tokens,
+            top_p=1.0
+        )
+        suggestion_text = completion.choices[0].message.content
+        print("LLM Handler: Code location suggestions received.")
+        return suggestion_text.strip()
+    except Exception as e:
+        print(f"ERROR (llm_handler.suggest_relevant_code_locations): LLM API call failed: {e}")
+        return f"Could not suggest code locations: LLM API error."
