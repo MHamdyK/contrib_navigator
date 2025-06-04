@@ -1,4 +1,4 @@
-import gradio as gr
+import gradio as gr # type: ignore
 import os
 from core.github_client import fetch_beginner_issues
 from core.llm_handler import get_simple_issue_suggestion
