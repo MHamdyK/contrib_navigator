@@ -218,7 +218,6 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         inputs=[selected_issue_dropdown, raw_issues_state, language_searched_state],
         outputs=[kit_output]
     )
-#more commit
 if __name__ == "__main__":
     print("Launching ContribNavigator Gradio App...")
     demo.launch()
