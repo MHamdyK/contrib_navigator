@@ -1,6 +1,6 @@
 import openai # Using the openai library for Nebius's OpenAI-compatible API
 import os     # For environment variables if not using config_loader directly here
-
+import json
 # Import API key and base URL from our config loader
 from utils.config_loader import OPENAI_API_KEY
 
@@ -214,3 +214,104 @@ def suggest_relevant_code_locations(
     except Exception as e:
         print(f"ERROR (llm_handler.suggest_relevant_code_locations): LLM API call failed: {e}")
         return f"Could not suggest code locations: LLM API error."
+
+def plan_onboarding_kit_components(
+        issue_data: dict,
+        language_searched: str,
+        model_name: str = "gpt-4.1-mini" # Or your preferred model
+    ) -> dict | None:
+    """
+    Uses an LLM to decide which onboarding kit components are most relevant for a given issue.
+    Returns a dictionary based on the LLM's JSON output.
+    """
+    if not client:
+        print("ERROR (llm_handler.plan_kit): LLM client not initialized.")
+        return None # Or: {"error": "LLM Client not initialized"}
+    if not issue_data:
+        print("ERROR (llm_handler.plan_kit): No issue data provided for planning.")
+        return None # Or: {"error": "No issue data"}
+
+    issue_title = issue_data.get("title", "N/A")
+    issue_snippet = issue_data.get("body_snippet", "No description available.")
+    issue_labels = issue_data.get("labels", [])
+
+    # Define available kit components for the LLM to choose from
+    available_components = [
+        "repo_details_and_clone_command",      # Basic repo info, clone command
+        "contribution_guidelines_link",        # Link to CONTRIBUTING.md
+        "contribution_guidelines_summary_ai",  # AI Summary of CONTRIBUTING.md
+        "repository_structure_modal_ai",       # File listing via Modal + AI suggested files
+        # We could break down "repository_structure_modal_ai" further if needed:
+        # "repository_files_modal_raw_list",
+        # "ai_suggested_start_files_from_list"
+    ]
+    components_description = (
+        "- repo_details_and_clone_command: Basic repository information and git clone command.\n"
+        "- contribution_guidelines_link: A direct link to the project's CONTRIBUTING.md file (if found).\n"
+        "- contribution_guidelines_summary_ai: An AI-generated summary of the key points from CONTRIBUTING.md.\n"
+        "- repository_structure_modal_ai: A top-level file/folder listing from a repository clone (via Modal), followed by AI suggestions for relevant files based on the issue."
+    )
+
+    system_prompt = (
+        "You are an expert onboarding assistant for open-source contributors. Your task is to intelligently plan "
+        "the components of an onboarding kit that would be most helpful for a developer tackling a specific GitHub issue. "
+        "You must respond ONLY with a valid JSON object containing a single key 'include_components' whose value is a list of strings, "
+        "where each string is one of the component names provided."
+    )
+    user_prompt = (
+        f"Based on the following GitHub issue details for a project searched under the language context '{language_searched}':\n"
+        f"Issue Title: \"{issue_title}\"\n"
+        f"Issue Snippet: \"{issue_snippet}\"\n"
+        f"Issue Labels: {issue_labels}\n\n"
+        f"And considering the following available onboarding kit components and their descriptions:\n"
+        f"{components_description}\n\n"
+        f"Which components should be included in the onboarding kit for this specific issue to be most helpful? "
+        f"For example, if the issue is a very simple documentation typo, a full 'repository_structure_modal_ai' might be overkill. "
+        f"If no contribution guidelines are typically found for a project, 'contribution_guidelines_summary_ai' would not be applicable. (You don't know this yet, but keep it in mind for general reasoning). "
+        f"Prioritize helpfulness for a beginner. Respond ONLY with a JSON object in the format: "
+        f"{{\"include_components\": [\"component_name_1\", \"component_name_2\", ...]}}"
+    )
+
+    print(f"LLM Handler (plan_kit): Sending request to plan kit components. Model: {model_name}")
+    try:
+        # Forcing JSON response mode if available and model supports it well
+        # gpt-4o-mini and newer gpt-3.5-turbo models usually handle "Respond ONLY with a valid JSON" well.
+        # For stronger enforcement, you can use response_format={"type": "json_object"} with compatible models.
+        completion_params = {
+            "model": model_name,
+            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            "temperature": 0.2, # Low temperature for more deterministic structural output
+            "max_tokens": 200, # JSON output should be relatively small
+            "top_p": 1.0,
+        }
+        # Check if the model might be one that supports explicit JSON mode via response_format
+        if "gpt-4o" in model_name or "gpt-3.5-turbo-0125" in model_name or "gpt-3.5-turbo-1106" in model_name: # Add other compatible models if known
+             completion_params["response_format"] = {"type": "json_object"}
+
+
+        completion = client.chat.completions.create(**completion_params)
+        
+        raw_response_content = completion.choices[0].message.content
+        print(f"LLM Handler (plan_kit): Raw JSON response received: {raw_response_content}")
+
+        # Attempt to parse the JSON
+        parsed_plan = json.loads(raw_response_content)
+        if "include_components" in parsed_plan and isinstance(parsed_plan["include_components"], list):
+            # Further validation: ensure all component names are valid (optional but good)
+            valid_components = [comp for comp in parsed_plan["include_components"] if comp in available_components]
+            if len(valid_components) != len(parsed_plan["include_components"]):
+                print("Warning (llm_handler.plan_kit): LLM returned some invalid component names.")
+            
+            final_plan = {"include_components": valid_components}
+            print(f"LLM Handler (plan_kit): Parsed plan: {final_plan}")
+            return final_plan
+        else:
+            print("ERROR (llm_handler.plan_kit): LLM response was not in the expected JSON format (missing 'include_components' list).")
+            return {"error": "LLM response format error", "details": "Missing 'include_components' list."}
+
+    except json.JSONDecodeError as json_e:
+        print(f"ERROR (llm_handler.plan_kit): Failed to decode JSON from LLM response. Error: {json_e}. Response was: {raw_response_content}")
+        return {"error": "JSON decode error", "details": str(json_e), "raw_response": raw_response_content}
+    except Exception as e:
+        print(f"ERROR (llm_handler.plan_kit): LLM API call failed: {e}")
+        return {"error": f"LLM API call failed: {str(e)}"}

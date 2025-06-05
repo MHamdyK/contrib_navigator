@@ -1,8 +1,8 @@
 import gradio as gr # type: ignore
 import os
 from core.github_client import fetch_beginner_issues # Updated to handle topics
-from core.llm_handler import get_simple_issue_suggestion
-from core.kit_generator import generate_basic_kit_content
+from core.llm_handler import get_simple_issue_suggestion, plan_onboarding_kit_components # ADDED planner
+from core.kit_generator import generate_kit_from_plan
 import utils.config_loader
 
 
@@ -118,70 +118,88 @@ def find_and_suggest_issues(language_input_str: str, topics_input_str: str | Non
     )
 
 
+# --- MODIFIED handle_kit_generation FUNCTION ---
 def handle_kit_generation(
     selected_issue_title_with_num: str,
     current_issues_state: list[dict],
-    language_searched_state: str # NEW parameter from gr.State
+    language_searched_state: str
 ):
     if not selected_issue_title_with_num or not current_issues_state:
         return "Please select an issue first, or fetch issues if the list is empty."
-    if not language_searched_state: # Should not happen if flow is correct
-        print("Warning (handle_kit_generation): Language searched was not found in state.")
-        # Fallback or use a default, though ideally this state should always be populated
-        language_searched_state = "the project's language" # Generic fallback
+    if not language_searched_state:
+        print("Warning (handle_kit_generation): Language searched was not found in state. Using generic context.")
+        language_searched_state = "the project's primary language"
 
+    selected_issue_obj = None
     try:
-        selected_issue_obj = None
-        # ... (logic to find selected_issue_obj remains the same) ...
         for i, issue_in_state in enumerate(current_issues_state):
             numbered_title_in_state = f"{i+1}. {issue_in_state.get('title', 'N/A')}"
             if numbered_title_in_state == selected_issue_title_with_num:
                 selected_issue_obj = issue_in_state
                 break
         if not selected_issue_obj:
-            return f"Error: Could not find data for selected issue '{selected_issue_title_with_num}'."
+            return f"Error: Could not find data for selected issue '{selected_issue_title_with_num}'. State might be stale."
 
-        print(f"App.py: Generating kit for: {selected_issue_obj.get('title')} (Language context: {language_searched_state})")
-        # --- MODIFIED CALL: Pass language_searched_state ---
-        kit_markdown_content = generate_basic_kit_content(selected_issue_obj, language_searched_state)
+        print(f"App.py (handle_kit): Generating kit for: {selected_issue_obj.get('title')}")
+        print(f"App.py (handle_kit): Language context: {language_searched_state}")
+
+        # 1. Call the LLM Planner
+        print("App.py (handle_kit): Calling LLM to plan kit components...")
+        plan_response = plan_onboarding_kit_components(selected_issue_obj, language_searched_state)
+
+        if not plan_response or "error" in plan_response:
+            error_detail = plan_response.get("details", "No details") if plan_response else "Planner returned None"
+            print(f"App.py (handle_kit): Error in planning kit components: {plan_response.get('error', 'Unknown planning error')}. Details: {error_detail}")
+            return f"Error: Could not plan the onboarding kit components. AI Planner message: {plan_response.get('error', 'Please try again.')} {('Details: '+error_detail if 'raw_response' not in plan_response else '')}" # Avoid showing raw LLM response to user
+
+        components_to_include = plan_response.get("include_components", [])
+        if not components_to_include:
+            print("App.py (handle_kit): Planner returned no components to include.")
+            return "The AI planner decided no specific kit components were needed, or the plan was empty. This might be an issue with the planning."
+
+        print(f"App.py (handle_kit): Planner suggested components: {components_to_include}")
+
+        # 2. Generate kit based on the plan
+        kit_markdown_content = generate_kit_from_plan(
+            selected_issue_obj,
+            language_searched_state,
+            components_to_include
+        )
         return kit_markdown_content
+
     except Exception as e:
-        print(f"App.py: Error during kit generation: {e}")
-        return f"An error occurred while generating the kit: {str(e)}"
+        print(f"App.py (handle_kit): Unexpected error during kit generation: {e}")
+        import traceback
+        traceback.print_exc() # Print full traceback to console for debugging
+        return f"An unexpected error occurred while generating the kit: {str(e)}"
 
 
+# Define the Gradio interface
+# (Your gr.Blocks UI definition remains the same as the last working version)
+# ...
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
+    # ... (all your UI elements: Markdown, Rows, Columns, Textboxes, Buttons, Dropdown, State vars)
     gr.Markdown("# 🤖 ContribNavigator: Your AI Guide to Open Source Contributions")
-    gr.Markdown("Enter a programming language and optional topics (comma-separated) to find beginner-friendly open source issues.") # MODIFIED
+    gr.Markdown("Enter a programming language and optional topics (comma-separated) to find beginner-friendly open source issues.")
 
     with gr.Row():
         with gr.Column(scale=1): # Input column
-            lang_input = gr.Textbox(label="Programming Language (*)", placeholder="e.g., python, javascript") # Added (*) for required
-            # --- NEW INPUT FIELD for Topics ---
+            lang_input = gr.Textbox(label="Programming Language (*)", placeholder="e.g., python, javascript")
             topics_input = gr.Textbox(label="Topics of Interest (Optional, comma-separated)", placeholder="e.g., machine-learning, web-dev, cli")
-            # --- END NEW INPUT FIELD ---
             find_button = gr.Button("🔍 Find Beginner Issues", variant="primary")
-
             with gr.Column(visible=False) as kit_controls_section:
-                selected_issue_dropdown = gr.Dropdown(
-                    label="Select an Issue to Generate Kit:",
-                    choices=[],
-                    interactive=True
-                )
+                selected_issue_dropdown = gr.Dropdown(label="Select an Issue to Generate Kit:", choices=[], interactive=True, visible=True) # visible=True here is fine as parent controls it
                 generate_kit_button = gr.Button("🛠️ Generate Onboarding Kit", visible=False)
-
         with gr.Column(scale=2): # Output column (issues and LLM)
             gr.Markdown("## Recommended Issues:")
             issues_output = gr.Markdown(value="Your recommended issues will appear here...")
             gr.Markdown("## Navigator's Insights:")
             llm_suggestion_output = gr.Markdown(value="AI-powered suggestions will appear here...")
-
             with gr.Column(visible=False) as kit_display_section:
                 gr.Markdown("## 📖 Your Onboarding Kit:")
                 kit_output = gr.Markdown("Your onboarding kit will appear here...")
 
     raw_issues_state = gr.State([])
-
     language_searched_state = gr.State("") # To store the last searched language
 
     find_button.click(
@@ -191,13 +209,12 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             issues_output, llm_suggestion_output, raw_issues_state,
             selected_issue_dropdown, generate_kit_button,
             kit_controls_section, kit_display_section,
-            language_searched_state # ADDED: output to the new state
+            language_searched_state
         ]
     )
 
     generate_kit_button.click(
         fn=handle_kit_generation,
-        # --- MODIFIED INPUTS ---
         inputs=[selected_issue_dropdown, raw_issues_state, language_searched_state],
         outputs=[kit_output]
     )
