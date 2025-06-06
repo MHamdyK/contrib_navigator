@@ -53,23 +53,37 @@ def _make_github_request(url: str, params: dict = None, headers: dict = None) ->
 
 def fetch_beginner_issues(
         language: str,
-        topics: list[str] | None = None, # ADDED topics parameter
-        labels: list[str] | None = None,
+        topics: list[str] | None = None,
+        labels: list[str] | None = None, # This allows explicit override of default label logic
         sort: str = "updated",
         order: str = "desc",
         per_page: int = 10,
         page: int = 1
     ) -> list[dict] | None:
     """
-    Fetches beginner-friendly issues for a given language and optional topics
-    from GitHub's public repositories.
+    Fetches beginner-friendly issues for a given language, optional topics,
+    and optional explicit labels from GitHub's public repositories.
     """
-    if not language: # Basic validation
+    if not language:
         print("ERROR (github_client.fetch_beginner_issues): Language parameter is required.")
         return None
 
-    if labels is None:
-        labels = ["good first issue", "help wanted"]
+    current_labels_to_use = [] # Initialize
+
+    if labels is not None: # If labels are explicitly passed, use them
+        current_labels_to_use = labels
+        print(f"GitHub Client: Using explicitly passed labels: {current_labels_to_use}")
+    else: # No explicit labels passed, use our default logic based on topics
+        if topics:
+            # When topics are specified, be more focused.
+            current_labels_to_use = ["good first issue"]
+            # Optionally, could expand to: current_labels_to_use = ["good first issue", "help wanted"]
+            # Let's start with just "good first issue" when topics are present for max precision.
+            print(f"GitHub Client: Topics specified, using focused labels: {current_labels_to_use}")
+        else:
+            # No topics specified, cast a slightly wider net with labels.
+            current_labels_to_use = ["good first issue", "help wanted", "beginner", "first-timers-only"]
+            print(f"GitHub Client: No topics specified, using broader default labels: {current_labels_to_use}")
 
     query_parts = [
         f"language:{language.strip().lower()}", # Normalize language
@@ -78,28 +92,29 @@ def fetch_beginner_issues(
         "is:public"
     ]
 
-    for label_name in labels:
-        if label_name.strip(): # Ensure label is not just whitespace
-            query_parts.append(f'label:"{label_name.strip()}"')
+    # Add label query parts only if current_labels_to_use is not empty
+    if current_labels_to_use:
+        for label_name in current_labels_to_use:
+            if label_name.strip(): # Ensure label is not just whitespace
+                query_parts.append(f'label:"{label_name.strip()}"')
+    else: # If current_labels_to_use ended up empty (e.g., if explicitly passed as []), don't add label filter
+        print("GitHub Client: No labels will be applied to the search query.")
 
-    # --- ADDED TOPICS TO QUERY ---
+
+    # Add topics to query if provided
     if topics:
         for topic_name_raw in topics:
-            topic_name = topic_name_raw.strip().lower()
-            if topic_name: # Ensure topic is not just whitespace
-                # GitHub topics with spaces are typically hyphenated (e.g., "web-development")
-                # or can be searched with quotes if they are actual multi-word tags.
-                # We'll assume topics are passed as GitHub expects them (e.g., "machine-learning" or "web development")
-                if " " in topic_name:
+            topic_name = topic_name_raw.strip().lower() # Assuming topics from dropdown are already slugs or correct phrases
+            if topic_name:
+                if " " in topic_name: # If the topic phrase itself has a space
                     query_parts.append(f'topic:"{topic_name}"')
-                else:
+                else: # Assumed to be a slug or single word
                     query_parts.append(f'topic:{topic_name}')
-    # --- END ADDED TOPICS ---
 
     q_string = " ".join(query_parts)
     params = {"q": q_string, "sort": sort, "order": order, "per_page": per_page, "page": page}
 
-    print(f"GitHub Client: Fetching issues with q_string: '{q_string}'") # Removed params from this print for brevity
+    print(f"GitHub Client: Fetching issues with q_string: '{q_string}'")
     data = _make_github_request(BASE_SEARCH_URL, params=params)
 
     if data and "items" in data:
@@ -119,8 +134,7 @@ def fetch_beginner_issues(
         return issues_list
     elif data and "items" not in data:
         print(f"GitHub Client: No 'items' in API response for query '{q_string}'. API Message: {data.get('message', 'N/A')}")
-        return [] # Valid response from API, but no matching items
-    # If data is None, _make_github_request already printed an error
+        return []
     return None
 
 

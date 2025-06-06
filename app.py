@@ -1,78 +1,122 @@
-import gradio as gr # type: ignore
+import gradio as gr
 import os
-from core.github_client import fetch_beginner_issues # Updated to handle topics
-from core.llm_handler import get_simple_issue_suggestion, plan_onboarding_kit_components # ADDED planner
+from core.github_client import fetch_beginner_issues
+from core.llm_handler import get_simple_issue_suggestion, plan_onboarding_kit_components
 from core.kit_generator import generate_kit_from_plan
 import utils.config_loader
 
+# --- NEW/UPDATED CONSTANTS ---
+# (Incorporating your suggestions and expanding slightly)
+CURATED_TOPIC_SLUGS = sorted(list(set([
+    # Your suggestions (some are single, some multi-word)
+    "javascript", "css", "config", "python", "html", "cli", "typescript", "tailwindcss", "github config", "llm", # "github config"
+    "deep neural networks", "deep learning", "neural network", # Changed to spaces
+    "tensorflow", "pytorch", "ml",
+    "distributed systems", # Changed to spaces
 
-COMMON_PROGRAMMING_LANGUAGES = {
+    # Broad Categories (changed to spaces where appropriate)
+    "web development", "mobile development", "game development", "machine learning",
+    "data science", "artificial intelligence", "devops", "cybersecurity", "blockchain",
+    "iot", "cloud computing", "big data", "robotics", "bioinformatics", "ar vr", # "ar vr" might be better as "augmented reality", "virtual reality" or keep as is if it's a common tag
+    "natural language processing", "computer vision", "data visualization",
+    # Specific Technologies & Frameworks
+    "react", "angular", "vue", "nextjs", "nodejs", "svelte",
+    "django", "flask", "spring", "dotnet", "ruby on rails", # "ruby on rails"
+    "android", "ios", "flutter", "react native", # "react native"
+    "scikit learn", "keras", "pandas", "numpy", # "scikit learn"
+    "docker", "kubernetes", "aws", "azure", "google cloud platform", "serverless", # "google cloud platform"
+    "sql", "nosql", "mongodb", "postgresql", "mysql", "graphql",
+    "api", "gui", "testing", "documentation", "education", "accessibility",
+    "raspberry pi", "arduino", "linux", "windows", "macos", "gaming", "graphics", "fintech" # "raspberry pi"
+])))
+
+CURATED_LANGUAGE_SLUGS = sorted([
     "python", "javascript", "java", "c#", "c++", "c", "go", "rust", "ruby", "php",
     "swift", "kotlin", "typescript", "html", "css", "sql", "r", "perl", "scala",
-    "haskell", "lua", "dart", "elixir", "clojure", "objective-c"
-}
+    "haskell", "lua", "dart", "elixir", "clojure", "objective-c", "shell", "powershell",
+    "assembly", "matlab", "groovy", "julia", "ocaml", "pascal", "fortran", "lisp",
+    "prolog", "erlang", "f#", "zig", "nim", "crystal", "svelte", "vue" # Svelte/Vue also as languages for their specific file types
+])
+# --- END NEW/UPDATED CONSTANTS ---
 
-# --- MODIFIED FUNCTION SIGNATURE AND LOGIC ---
-def find_and_suggest_issues(language_input_str: str, topics_input_str: str | None = None):
-    print(f"Gradio app received language: '{language_input_str}', topics: '{topics_input_str}'")
-    language_input_lower = language_input_str.strip().lower() if language_input_str else ""
 
-    # --- NEW: Parse topics ---
-    parsed_topics_list = None
-    if topics_input_str:
-        parsed_topics_list = [topic.strip().lower() for topic in topics_input_str.split(',') if topic.strip()]
-        if not parsed_topics_list: # If string was just commas or whitespace resulting in empty list
-            parsed_topics_list = None
-    print(f"Parsed topics: {parsed_topics_list}")
-    # --- END NEW: Parse topics ---
+# --- MODIFIED FUNCTION: find_and_suggest_issues ---
+def find_and_suggest_issues(
+    selected_language: str | None, # From language dropdown
+    selected_curated_topics: list[str] | None, # From topics dropdown (multiselect)
+    custom_topics_str: str | None # From topics textbox
+):
+    print(f"Gradio app received language: '{selected_language}', curated_topics: {selected_curated_topics}, custom_topics: '{custom_topics_str}'")
 
-    if not language_input_lower:
-        return ("Please enter a programming language.", None, None,
+    # --- Default error/empty returns for 8 outputs ---
+    # issues_markdown, llm_suggestion, raw_issues_state,
+    # dropdown_update, button_update, controls_section_update, display_section_update,
+    # language_searched_state
+    empty_error_return = (
+        "Error or no input.", None, None,
+        gr.update(choices=[], value=None, visible=False), gr.update(visible=False),
+        gr.update(visible=False), gr.update(visible=False),
+        "" # language_searched_state
+    )
+    no_issues_found_return_factory = lambda lang, topics_str: (
+        f"No beginner-friendly issues found for '{lang}'" +
+        (f" with topics '{topics_str}'" if topics_str else "") +
+        " using current labels. Try different criteria.",
+        None, None,
+        gr.update(choices=[], value=None, visible=False), gr.update(visible=False),
+        gr.update(visible=False), gr.update(visible=False),
+        lang or ""
+    )
+    # ---
+
+    if not selected_language: # Language is now from a dropdown, should always have a value if user interacts
+        return ("Please select a programming language.", None, None,
                 gr.update(choices=[], value=None, visible=False), gr.update(visible=False),
-                gr.update(visible=False), gr.update(visible=False))
+                gr.update(visible=False), gr.update(visible=False),
+                "")
 
-    is_common_language = language_input_lower in COMMON_PROGRAMMING_LANGUAGES
-    language_warning_for_llm = ""
-    if not is_common_language and len(language_input_lower) > 1:
-        print(f"Warning: '{language_input_str}' is not in the common languages list.")
-        language_warning_for_llm = (
-            f"The user searched for language '{language_input_str}', which isn't common. "
-            "Issues found are label-based (and topic-based if topics were provided); "
-            "assess language match if possible."
-        )
+    language_to_search = selected_language.strip().lower() # Already a slug from dropdown
 
-    # --- MODIFIED CALL: Pass parsed_topics_list to fetch_beginner_issues ---
+    # --- Combine curated and custom topics ---
+    final_topics_set = set()
+    if selected_curated_topics: # This will be a list from multiselect dropdown
+        for topic in selected_curated_topics:
+            if topic and topic.strip():
+                final_topics_set.add(topic.strip().lower()) # Already slugs
+    if custom_topics_str:
+        custom_topics_list = [ct.strip().lower() for ct in custom_topics_str.split(',') if ct.strip()]
+        for topic in custom_topics_list:
+            final_topics_set.add(topic) # Add directly, github_client handles quoting if needed
+    
+    final_topics_list = list(final_topics_set) if final_topics_set else None
+    print(f"Final parsed topics for search: {final_topics_list}")
+    # --- End Combine topics ---
+
+    # --- REMOVED: is_common_language and language_warning_for_llm logic ---
+    # Since language comes from a curated dropdown, we assume it's "common" or valid.
+    # The GitHub API will be the ultimate judge if it finds anything.
+
     fetched_issues_list = fetch_beginner_issues(
-        language_input_lower,
-        topics=parsed_topics_list, # Pass parsed topics
-        per_page=5
+        language_to_search,
+        topics=final_topics_list,
+        per_page=5 # Fetch 5 issues
     )
 
-    if fetched_issues_list is None:
-        error_msg = "Error: Could not fetch issues from GitHub. Check server logs for details from github_client."
-        return (error_msg, None, None,
+    if fetched_issues_list is None: # GitHub API call failed
+        return ("Error: Could not fetch issues from GitHub. Check server logs.", None, None,
                 gr.update(choices=[], value=None, visible=False), gr.update(visible=False),
-                gr.update(visible=False), gr.update(visible=False))
+                gr.update(visible=False), gr.update(visible=False),
+                language_to_search)
 
-    if not fetched_issues_list:
-        no_issues_msg = f"No beginner-friendly issues found for '{language_input_str}'"
-        if parsed_topics_list: # MODIFIED: Include topics in the message
-            no_issues_msg += f" with topics '{', '.join(parsed_topics_list)}'"
-        no_issues_msg += " using current labels. Try different criteria."
-        return (no_issues_msg, None, None,
-                gr.update(choices=[], value=None, visible=False), gr.update(visible=False),
-                gr.update(visible=False), gr.update(visible=False))
+    if not fetched_issues_list: # No issues found
+        return no_issues_found_return_factory(language_to_search, ", ".join(final_topics_list) if final_topics_list else None)
 
-    issues_markdown_prefix = ""
-    if not is_common_language and len(language_input_lower) > 1:
-        issues_markdown_prefix = (
-            f"⚠️ **Note:** '{language_input_str}' is not a commonly recognized programming language. "
-            f"The issues below were found based on labels and topics and may not be specific to '{language_input_str}'.\n\n---\n"
-        )
+    # --- REMOVED: issues_markdown_prefix related to uncommon language ---
+    # This is no longer needed if language is from a curated dropdown.
 
     issues_display_list = []
     issue_titles_for_dropdown = []
-    for i, issue in enumerate(fetched_issues_list[:5]):
+    for i, issue in enumerate(fetched_issues_list[:5]): # Display up to 5
         title = issue.get('title', 'N/A')
         issues_display_list.append(
             f"{i+1}. **{title}**\n"
@@ -81,55 +125,42 @@ def find_and_suggest_issues(language_input_str: str, topics_input_str: str | Non
             f"   - Labels: {', '.join(issue.get('labels', []))}\n"
         )
         issue_titles_for_dropdown.append(f"{i+1}. {title}")
-    issues_markdown = issues_markdown_prefix + "\n---\n".join(issues_display_list)
+    issues_markdown = "\n---\n".join(issues_display_list)
 
     issues_for_llm = fetched_issues_list[:3]
-    llm_suggestion_text = "Could not get LLM suggestion at this moment." # Default
+    llm_suggestion_text = "Could not get LLM suggestion at this moment."
     if issues_for_llm and utils.config_loader.OPENAI_API_KEY:
-        # print(f"App.py: Sending {len(issues_for_llm)} issues to LLM...") # Already printed in llm_handler
-        suggestion = get_simple_issue_suggestion(
-            issues_for_llm,
-            language_input_str,
-            target_count=1,
-            additional_prompt_context=language_warning_for_llm
+        suggestion = get_simple_issue_suggestion( # Pass language_to_search
+            issues_for_llm, language_to_search, target_count=1
+            # additional_prompt_context for uncommon language is removed
         )
-        if suggestion:
-            llm_suggestion_text = f"**🤖 AI Navigator's Suggestion:**\n\n{suggestion}"
-        else:
-            llm_suggestion_text = "LLM processed the request but gave an empty response or an error occurred (see server logs)."
+        if suggestion: llm_suggestion_text = f"**🤖 AI Navigator's Suggestion:**\n\n{suggestion}"
+        else: llm_suggestion_text = "LLM processed the request but gave an empty response or an error occurred."
     elif not utils.config_loader.OPENAI_API_KEY:
         llm_suggestion_text = "OpenAI API Key not configured. LLM suggestion skipped."
-    elif not issues_for_llm: # This case should be caught by "if not fetched_issues_list" earlier
+    elif not issues_for_llm :
          llm_suggestion_text = "No issues were available to provide a suggestion for."
 
-    kit_dropdown_update = gr.update(choices=issue_titles_for_dropdown, value=issue_titles_for_dropdown[0] if issue_titles_for_dropdown else None)
+    kit_dropdown_update = gr.update(choices=issue_titles_for_dropdown, value=issue_titles_for_dropdown[0] if issue_titles_for_dropdown else None, visible=True)
     kit_button_visibility_update = gr.update(visible=True)
     kit_controls_section_update = gr.update(visible=True)
     kit_display_section_update = gr.update(visible=True)
-    return (
-        issues_markdown,                    # 1
-        llm_suggestion_text,                # 2
-        fetched_issues_list,                # 3 (for raw_issues_state)
-        kit_dropdown_update,                # 4 (for selected_issue_dropdown)
-        kit_button_visibility_update,       # 5 (for generate_kit_button)
-        kit_controls_section_update,        # 6 (for kit_controls_section)
-        kit_display_section_update,          # 7 (for kit_display_section)
-        language_input_lower
-    )
+
+    return (issues_markdown, llm_suggestion_text, fetched_issues_list,
+            kit_dropdown_update, kit_button_visibility_update,
+            kit_controls_section_update, kit_display_section_update,
+            language_to_search) # Return the searched language for state
+# --- END MODIFIED FUNCTION ---
 
 
-# --- MODIFIED handle_kit_generation FUNCTION ---
-def handle_kit_generation(
-    selected_issue_title_with_num: str,
-    current_issues_state: list[dict],
-    language_searched_state: str
-):
+# handle_kit_generation function (This function should be your last correct version)
+# ... (Ensure your full handle_kit_generation is here)
+def handle_kit_generation(selected_issue_title_with_num: str, current_issues_state: list[dict], language_searched_state: str ):
+    checklist_update_on_error = gr.update(value=[], visible=False)
     if not selected_issue_title_with_num or not current_issues_state:
-        return "Please select an issue first, or fetch issues if the list is empty."
+        return "Please select an issue first...", checklist_update_on_error
     if not language_searched_state:
-        print("Warning (handle_kit_generation): Language searched was not found in state. Using generic context.")
         language_searched_state = "the project's primary language"
-
     selected_issue_obj = None
     try:
         for i, issue_in_state in enumerate(current_issues_state):
@@ -138,73 +169,97 @@ def handle_kit_generation(
                 selected_issue_obj = issue_in_state
                 break
         if not selected_issue_obj:
-            return f"Error: Could not find data for selected issue '{selected_issue_title_with_num}'. State might be stale."
-
-        print(f"App.py (handle_kit): Generating kit for: {selected_issue_obj.get('title')}")
-        print(f"App.py (handle_kit): Language context: {language_searched_state}")
-
-        # 1. Call the LLM Planner
-        print("App.py (handle_kit): Calling LLM to plan kit components...")
+            return f"Error: Could not find data for issue '{selected_issue_title_with_num}'.", checklist_update_on_error
         plan_response = plan_onboarding_kit_components(selected_issue_obj, language_searched_state)
-
         if not plan_response or "error" in plan_response:
-            error_detail = plan_response.get("details", "No details") if plan_response else "Planner returned None"
-            print(f"App.py (handle_kit): Error in planning kit components: {plan_response.get('error', 'Unknown planning error')}. Details: {error_detail}")
-            return f"Error: Could not plan the onboarding kit components. AI Planner message: {plan_response.get('error', 'Please try again.')} {('Details: '+error_detail if 'raw_response' not in plan_response else '')}" # Avoid showing raw LLM response to user
-
+            error_detail = plan_response.get("details", "") if plan_response else "Planner None"
+            return f"Error planning kit: {plan_response.get('error', 'Unknown')}. {error_detail}", checklist_update_on_error
         components_to_include = plan_response.get("include_components", [])
         if not components_to_include:
-            print("App.py (handle_kit): Planner returned no components to include.")
-            return "The AI planner decided no specific kit components were needed, or the plan was empty. This might be an issue with the planning."
-
-        print(f"App.py (handle_kit): Planner suggested components: {components_to_include}")
-
-        # 2. Generate kit based on the plan
-        kit_markdown_content = generate_kit_from_plan(
-            selected_issue_obj,
-            language_searched_state,
-            components_to_include
-        )
-        return kit_markdown_content
-
+            return "AI planner decided no kit components needed.", checklist_update_on_error
+        kit_markdown_content = generate_kit_from_plan(selected_issue_obj, language_searched_state, components_to_include)
+        checklist_update_on_success = gr.update(value=[], visible=True)
+        return kit_markdown_content, checklist_update_on_success
     except Exception as e:
-        print(f"App.py (handle_kit): Unexpected error during kit generation: {e}")
         import traceback
-        traceback.print_exc() # Print full traceback to console for debugging
-        return f"An unexpected error occurred while generating the kit: {str(e)}"
+        traceback.print_exc()
+        return f"Unexpected error generating kit: {str(e)}", checklist_update_on_error
 
 
-# Define the Gradio interface
-# (Your gr.Blocks UI definition remains the same as the last working version)
-# ...
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
-    # ... (all your UI elements: Markdown, Rows, Columns, Textboxes, Buttons, Dropdown, State vars)
     gr.Markdown("# 🤖 ContribNavigator: Your AI Guide to Open Source Contributions")
-    gr.Markdown("Enter a programming language and optional topics (comma-separated) to find beginner-friendly open source issues.")
+    gr.Markdown("Select a programming language and optional topics to find beginner-friendly open source issues.") # MODIFIED
 
     with gr.Row():
         with gr.Column(scale=1): # Input column
-            lang_input = gr.Textbox(label="Programming Language (*)", placeholder="e.g., python, javascript")
-            topics_input = gr.Textbox(label="Topics of Interest (Optional, comma-separated)", placeholder="e.g., machine-learning, web-dev, cli")
+            # --- MODIFIED Language Input to Dropdown ---
+            lang_dropdown_input = gr.Dropdown(
+                label="Programming Language (*)",
+                choices=CURATED_LANGUAGE_SLUGS,
+                value=CURATED_LANGUAGE_SLUGS[CURATED_LANGUAGE_SLUGS.index("python")] if "python" in CURATED_LANGUAGE_SLUGS else CURATED_LANGUAGE_SLUGS[0] if CURATED_LANGUAGE_SLUGS else None, # Default to python or first in list
+                interactive=True,
+                # allow_custom_value=True # Consider this if you want users to type languages not in the list
+            )
+            # --- END MODIFIED Language Input ---
+
+            # --- NEW/MODIFIED Topics Input ---
+            curated_topics_dropdown = gr.Dropdown(
+                label="Select Common Topics (Optional, Multi-Select)",
+                choices=CURATED_TOPIC_SLUGS,
+                multiselect=True,
+                interactive=True
+            )
+            custom_topics_input = gr.Textbox(
+                label="Or, Add Custom Topics (Optional, comma-separated slugs)",
+                placeholder="e.g., my-niche-topic, another-custom-tag"
+            )
+            # --- END NEW/MODIFIED Topics Input ---
+
             find_button = gr.Button("🔍 Find Beginner Issues", variant="primary")
+
             with gr.Column(visible=False) as kit_controls_section:
-                selected_issue_dropdown = gr.Dropdown(label="Select an Issue to Generate Kit:", choices=[], interactive=True, visible=True) # visible=True here is fine as parent controls it
+                selected_issue_dropdown = gr.Dropdown(
+                    label="Select an Issue to Generate Kit:", choices=[], interactive=True, visible=True
+                )
                 generate_kit_button = gr.Button("🛠️ Generate Onboarding Kit", visible=False)
-        with gr.Column(scale=2): # Output column (issues and LLM)
+
+        with gr.Column(scale=2): # Output column
             gr.Markdown("## Recommended Issues:")
             issues_output = gr.Markdown(value="Your recommended issues will appear here...")
             gr.Markdown("## Navigator's Insights:")
             llm_suggestion_output = gr.Markdown(value="AI-powered suggestions will appear here...")
+
             with gr.Column(visible=False) as kit_display_section:
                 gr.Markdown("## 📖 Your Onboarding Kit:")
                 kit_output = gr.Markdown("Your onboarding kit will appear here...")
+                # --- Using INITIAL_CHECKLIST_ITEMS constant for choices ---
+                INITIAL_CHECKLIST_ITEMS = [
+                    "Understand the Issue: Read the issue description carefully.",
+                    "Explore the Repository: Use the 'Quick Look' section in the kit to get familiar.",
+                    "Read Contribution Guidelines: Review the project's contribution rules and setup (see kit).",
+                    "Clone the Repository: Get the code on your local machine (see kit for command).",
+                    "Set Up Development Environment: Follow any setup instructions in the guidelines.",
+                    "Create a New Branch: For your changes (e.g., `git checkout -b my-fix-for-issue-123`).",
+                    "Make Initial Contact (Optional but good): Leave a comment on the GitHub issue expressing your interest.",
+                    "Start Investigating/Coding!",
+                    "Ask Questions: If you're stuck, don't hesitate to ask for help on the issue or project's communication channels."
+                ]
+                checklist_group_output = gr.CheckboxGroup(
+                    label="✅ Your First Steps Checklist:",
+                    choices=INITIAL_CHECKLIST_ITEMS,
+                    value=[],
+                    interactive=True,
+                    visible=False # Starts hidden
+                )
+                # --- END Using INITIAL_CHECKLIST_ITEMS ---
 
     raw_issues_state = gr.State([])
-    language_searched_state = gr.State("") # To store the last searched language
+    language_searched_state = gr.State("")
 
+    # --- MODIFIED find_button.click inputs ---
     find_button.click(
         fn=find_and_suggest_issues,
-        inputs=[lang_input, topics_input],
+        inputs=[lang_dropdown_input, curated_topics_dropdown, custom_topics_input], # UPDATED
         outputs=[
             issues_output, llm_suggestion_output, raw_issues_state,
             selected_issue_dropdown, generate_kit_button,
@@ -212,12 +267,14 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             language_searched_state
         ]
     )
+    # --- END MODIFIED find_button.click ---
 
     generate_kit_button.click(
         fn=handle_kit_generation,
         inputs=[selected_issue_dropdown, raw_issues_state, language_searched_state],
-        outputs=[kit_output]
+        outputs=[kit_output, checklist_group_output] # Targets CheckboxGroup
     )
+
 if __name__ == "__main__":
     print("Launching ContribNavigator Gradio App...")
     demo.launch()
