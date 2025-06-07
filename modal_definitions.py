@@ -58,21 +58,8 @@ def clone_and_list_files_on_modal(repo_url: str) -> dict:
 # --- Optional: Local testing entrypoint for this Modal function ---
 @stub.local_entrypoint()
 async def test_clone_function_on_modal():
-    # Test with a known public repository that works
+
     test_repo_url_successful = "https://github.com/gradio-app/gradio.git"
     print(f"\n[Local Test] Calling Modal function for successful clone: {test_repo_url_successful}")
     result_successful = await clone_and_list_files_on_modal.remote.aio(test_repo_url_successful)
     print(f"[Local Test] Result from Modal for successful clone: {result_successful}\n")
-
-    # --- This section is now fully commented out to avoid NameError ---
-    # test_repo_url_small = "https://github.com/git-guides/install-git.git" # A very small repo
-    # print(f"\n[Local Test] Calling Modal function for: {test_repo_url_small}")
-    # result_small = await clone_and_list_files_on_modal.remote.aio(test_repo_url_small)
-    # print(f"[Local Test] Result from Modal for small repo: {result_small}\n")
-    # --- End of commented out section ---
-
-    # Test with a non-existent repo URL (expecting an error)
-    # non_existent_repo_url = "https://github.com/this/repo-does-not-exist12345.git"
-    # print(f"\n[Local Test] Calling Modal function for non-existent repo: {non_existent_repo_url}")
-    # result_non_existent = await clone_and_list_files_on_modal.remote.aio(non_existent_repo_url)
-    # print(f"[Local Test] Result from Modal for non-existent repo: {result_non_existent}\n")

@@ -1,5 +1,5 @@
-import openai # Using the openai library for Nebius's OpenAI-compatible API
-import os     # For environment variables if not using config_loader directly here
+import openai 
+import os     
 import json
 # Import API key and base URL from our config loader
 from utils.config_loader import OPENAI_API_KEY
@@ -24,8 +24,8 @@ def get_simple_issue_suggestion(
         issues_data: list[dict],
         language: str,
         target_count: int = 1,
-        model_name: str = "gpt-4o-mini", # Or your preferred model
-        additional_prompt_context: str = "" # NEW parameter
+        model_name: str = "gpt-4o-mini", 
+        additional_prompt_context: str = "" 
     ) -> str | None:
     """
     Sends issue data to OpenAI API to suggest which one(s) might be best for a beginner.
@@ -141,8 +141,7 @@ def summarize_text_content(
     user_prompt = (
         f"Please summarize the key points of the following {purpose} document:\n\n"
         f"```text\n{text_content[:8000]}\n```" # Limit context sent to LLM
-        # Using 8000 characters as a rough limit to fit within context windows & manage cost.
-        # Adjust this based on typical CONTRIBUTING.md length and model context limits.
+
     )
 
     print(f"LLM Handler: Sending request to summarize {purpose}. Model: {model_name}")
@@ -235,7 +234,6 @@ def plan_onboarding_kit_components(
     issue_snippet = issue_data.get("body_snippet", "No description available.")
     issue_labels = issue_data.get("labels", [])
 
-    # Define available kit components for the LLM to choose from
     available_components = [
         "repo_details_and_clone_command",      # Basic repo info, clone command
         "contribution_guidelines_link",        # Link to CONTRIBUTING.md
@@ -274,9 +272,7 @@ def plan_onboarding_kit_components(
 
     print(f"LLM Handler (plan_kit): Sending request to plan kit components. Model: {model_name}")
     try:
-        # Forcing JSON response mode if available and model supports it well
-        # gpt-4o-mini and newer gpt-3.5-turbo models usually handle "Respond ONLY with a valid JSON" well.
-        # For stronger enforcement, you can use response_format={"type": "json_object"} with compatible models.
+
         completion_params = {
             "model": model_name,
             "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
@@ -284,7 +280,6 @@ def plan_onboarding_kit_components(
             "max_tokens": 200, # JSON output should be relatively small
             "top_p": 1.0,
         }
-        # Check if the model might be one that supports explicit JSON mode via response_format
         if "gpt-4o" in model_name or "gpt-3.5-turbo-0125" in model_name or "gpt-3.5-turbo-1106" in model_name: # Add other compatible models if known
              completion_params["response_format"] = {"type": "json_object"}
 

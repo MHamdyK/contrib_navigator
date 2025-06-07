@@ -1,9 +1,7 @@
-# core/kit_generator.py
 from .github_client import get_repository_details, get_file_url_from_repo, get_file_content
 from .modal_processor import get_repo_file_listing_via_modal
 from .llm_handler import summarize_text_content, suggest_relevant_code_locations
 
-# --- Helper function to get common repo info needed by multiple sections ---
 def _get_common_repo_info(issue_data: dict) -> tuple[str | None, str | None, str]:
     """Extracts/derives repo_full_name, repo_api_url, and default_branch_name."""
     repo_html_url = issue_data.get("repository_html_url", "#")
@@ -32,7 +30,6 @@ def _get_common_repo_info(issue_data: dict) -> tuple[str | None, str | None, str
     
     return repo_full_name, branch_from_api, default_branch_name
 
-# --- Helper functions for generating individual kit sections ---
 
 def _generate_repo_details_section(issue_data: dict, default_branch_name: str) -> str:
     issue_title = issue_data.get("title", "N/A")
@@ -195,18 +192,7 @@ Congratulations on choosing this issue! Here's some information to help you get 
 
     if generate_guidelines_link or generate_guidelines_summary:
         print("Kit Generator (plan): Adding contribution guidelines section (link and/or summary).")
-        # The helper function _generate_contribution_guidelines_section now handles both
-        # and will only generate summary if content is fetched.
-        # We can refine it to only fetch/summarize if generate_guidelines_summary is true.
-        # For now, let's make the helper smarter or adjust the planner.
-        #
-        # Simplified: Let _generate_contribution_guidelines_section do its thing.
-        # If only link was asked, it will still try to get content for summary but summary_markdown will be empty if not asked.
-        # This needs further refinement if we want to strictly adhere to planner *not* doing summary if not asked.
-        #
-        # Let's adjust the helper to accept a flag for summary.
-        # For now, the existing _generate_contribution_guidelines_section will attempt summary if content is found.
-        # We will rely on the LLM planner to be smart. If it asks for summary, it implies link is also useful.
+
         guidelines_section_md = _generate_contribution_guidelines_section(repo_full_name, branch_from_api)
         
         # Temporary fix: if only link is requested, strip summary if it was generated.
@@ -228,13 +214,7 @@ Congratulations on choosing this issue! Here's some information to help you get 
     return "\n\n".join(markdown_parts).strip()
 
 
-# --- Keep your old generate_basic_kit_content for now, or comment out/remove if fully replaced ---
-# def generate_basic_kit_content(issue_data: dict, language_searched: str) -> str:
-#    # ... your previous full implementation ...
-#    # This will eventually be replaced by calls to generate_kit_from_plan
-#    print("WARNING: generate_basic_kit_content is called, should be generate_kit_from_plan")
-#    # For now, let it be, app.py will call the new one once updated.
-#    # To avoid breaking app.py immediately, we can have it call the new function with a default plan.
+
     default_plan_for_basic = [
         "repo_details_and_clone_command",
         "contribution_guidelines_link", # Basic just wants the link
