@@ -6,7 +6,7 @@ ContribNavigator is an AI-assisted tool designed to help developers, especially 
 
 Check out this 1-minute video demonstrating ContribNavigator in action!
 
-[![ContribNavigator Demo Video](https://raw.githubusercontent.com//MHamdyK/contrib_navigator/tree/main/assets/thumbnail.png)](https://www.youtube.com/watch?v=xT6YkdSJ4Fg&ab_channel=EfilWarlord)
+[![ContribNavigator Demo Video](https://raw.githubusercontent.com//MHamdyK/contrib_navigator/main/assets/thumbnail.png)](https://www.youtube.com/watch?v=xT6YkdSJ4Fg&ab_channel=EfilWarlord)
 
 
 ## Core Features
