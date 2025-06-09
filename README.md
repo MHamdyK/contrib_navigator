@@ -2,6 +2,13 @@
 
 ContribNavigator is an AI-assisted tool designed to help developers, especially newcomers, find and begin contributing to open-source projects on GitHub. It streamlines issue discovery and provides an intelligently generated onboarding kit.
 
+## 🎥 Demo Video
+
+Check out this 1-minute video demonstrating ContribNavigator in action!
+
+[![ContribNavigator Demo Video](https://raw.githubusercontent.com//MHamdyK/contrib_navigator/tree/main/assets/thumbnail.png)](https://www.youtube.com/watch?v=xT6YkdSJ4Fg&ab_channel=EfilWarlord)
+
+
 ## Core Features
 
 *   **Targeted Issue Search:** Filters GitHub issues by programming language and user-specified topics (e.g., "python" + "machine-learning"), prioritizing beginner-friendly labels like "good first issue."
