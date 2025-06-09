@@ -71,7 +71,7 @@ def find_and_suggest_issues(
                 gr.update(choices=[], value=None, visible=False), gr.update(visible=False),
                 gr.update(visible=False), gr.update(visible=False),
                 "")
-
+    
     language_to_search = selected_language.strip().lower() # Already a slug from dropdown
 
     # Combine curated and custom topics 
